@@ -1429,11 +1429,9 @@ class MotionDiffusion(GaussianDiffusion):
         sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise
 
         sampling_info['t'] = t
-        if (t <= 700 and sampling_info['unrelated']) or t<= 100:
+        if (t <= 700 and sampling_info['unrelated']) or t<= 988:
             loss, gradient = self.gradients(pred_x_start, x, sampling_info)
-            if loss != 0:
-                sample = sample - gradient
-                print(torch.isnan(sample).any())
+            sample = sample - gradient
 
         return {"sample": sample, "pred_xstart": out["pred_xstart"].detach()}
 
@@ -1804,34 +1802,33 @@ class MotionDiffusion(GaussianDiffusion):
                 distances_squared = torch.norm((root_pos1 - root_pos2), dim=-1)
 
                 loss = torch.maximum(torch.zeros_like(distances_squared), 1.5 - distances_squared)
-                loss = torch.nan_to_num(loss, nan=0.0)
+                # loss = torch.nan_to_num(loss, nan=0.0)
                 losses += loss.sum()
 
-            if sampling_info['t'] % 50 == 0:
-                print('unrelated_loss: ', losses)
+            # if sampling_info['t'] % 50 == 0:
+            #     print('unrelated_loss: ', losses)
 
-            if sampling_info['t'] <= 100:
+            if sampling_info['t'] <= 988:
                 b_start = sampling_info['cond']
                 b_start = b_start.detach().requires_grad_()
                 b_start = self.normalizer.backward(b_start, global_rt=True)
                 motion1 = x_start[..., :22 * 3].reshape(B, T, 22, 3)
                 motion2 = b_start[..., :22 * 3].reshape(B, T, 22, 3)
                 GLI = self.topology_loss(motion1, motion2)
-                GLI = torch.nan_to_num(GLI, nan=0.0)
+                if torch.isnan(GLI).any():
+                    print('GLI', 'True', GLI)
                 mask = (GLI >= 0.4)
                 GLI = GLI * mask
-                if sampling_info['t'] % 10 == 0:
-                    print('GLI: ', GLI.sum())
-                losses += GLI.sum()
-
-            if losses.item() == 0:
+                # if sampling_info['t'] % 10 == 0:
+                #     print('GLI: ', GLI.sum())
+                gradient = torch.autograd.grad(GLI.sum(), inputs=x, create_graph=False)[0]
+                if torch.isnan(gradient).any():
+                    print('gradient', 'True', gradient)
                 x_start.detach()
                 x.detach()
-                return 0, 0
+                return GLI.sum(), gradient
+
             gradient = torch.autograd.grad(losses, inputs=x, create_graph=False)[0]
-            if sampling_info['t'] <= 100:
-                if torch.isnan(gradient).any():
-                    print('gradient', 'True', losses)
             x_start.detach()
             x.detach()
         return losses, gradient

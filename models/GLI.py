@@ -199,7 +199,7 @@ class TopologyBatch(nn.Module):
 
         # Calculate face normals and their norms
         faces = [torch.cross(r13, r14), torch.cross(r14, r24), torch.cross(r24, r23), torch.cross(r23, r13)]
-        normalized_faces = [vec / torch.norm(vec) if torch.norm(vec) != 0 else torch.zeros(3) for vec in faces]
+        normalized_faces = [vec / torch.norm(vec) if torch.norm(vec) != 0 else torch.ones(3) for vec in faces]
 
         # Compute GLI using arcsin of dot products
         GLI = 0.0
@@ -295,30 +295,36 @@ class TopologyBatch(nn.Module):
                 else:
                     count += 1
 
-        for b, start, end in windows:
-            for i in range(start, end + 1):
+        # for b, start, end in windows:
+        #     for i in range(start, end + 1):
+        #         pose1 = motion1[b, i]
+        #         pose2 = motion2[b, i]
+        #         GLI_pose = self.gauss_integral_skeleton(paths, pose1, pose2)
+        #         GLI_motion[b, i] += GLI_pose
+
+        for b in range(batch):
+            for i in tqdm(range(frame)):
                 pose1 = motion1[b, i]
                 pose2 = motion2[b, i]
                 GLI_pose = self.gauss_integral_skeleton(paths, pose1, pose2)
-                GLI_motion[b, i] = GLI_pose
+                GLI_motion[b, i] += GLI_pose
 
         GLI_abs_vel = torch.abs(GLI_motion[:, 1:] - GLI_motion[:, :-1])
         GLI_abs_vel = GLI_abs_vel.view(batch, frame - 1, -1)
         GLI_abs_vel_max = torch.max(GLI_abs_vel, dim=-1)[0]
-        return GLI_abs_vel_max
+        return GLI_motion, GLI_abs_vel_max
 
     def forward(self, motion1, motion2):
         return self.gauss_integral_motion(motion1, motion2)
 
 
 if __name__ == '__main__':
-    motion1 = np.load('../results/multi/left_punch_control_3p_th15_GLI_p0.npy')
-    motion2 = np.load('../results/multi/left_punch_control_3p_th15_GLI_p1.npy')
-    motion3 = np.load('../results/multi/left_punch_control_3p_th15_GLI_p2.npy')
+    motion1 = np.load('../results/multi/left_punch_control_th2_p0.npy')
+    motion2 = np.load('../results/multi/left_punch_control_th2_p2.npy')
+    motion3 = np.load('../results/multi/left_punch_control_th2_p1.npy')
     kinematic_chain = [[0, 2, 5, 8, 11], [0, 1, 4, 7, 10], [0, 3, 6, 9, 12, 15], [9, 14, 17, 19, 21],
                        [9, 13, 16, 18, 20]]
 
-    print(motion3)
     motion3 -= 1
     GLI_layer = TopologyBatch(kinematic_chain, 22)
     # GLI_new = gauss_integral_motion(kinematic_chain, motion1, motion2)
@@ -327,7 +333,17 @@ if __name__ == '__main__':
 
     with torch.enable_grad():
         motion1 = motion1.detach().requires_grad_()
-        GLI = GLI_layer(motion1, motion3)
-        distance = torch.norm((motion1 - motion3), dim=-1)
+        GLI_motion, GLI = GLI_layer(motion1, motion3)
+        GLI_motion = torch.sum(GLI_motion, dim=[-1, -2])
+        print(torch.where(GLI>0.4))
+        print(torch.where(torch.abs(GLI_motion) < 0.05))
+        print(GLI.shape)
         print(GLI.sum())
-        print(distance)
+        print(GLI.grad_fn)
+        print("Gradient of GLI:", GLI.retain_grad())
+
+        gradient = torch.autograd.grad(GLI.sum(), inputs=motion1, create_graph=False)[0]
+        print(torch.isnan(gradient).any())
+        nan_indices = torch.nonzero(torch.isnan(gradient), as_tuple=False)
+        print("NaN values found in GLI_motion at indices:", nan_indices)
+        print("NaN values found in GLI_motion", GLI_motion[nan_indices[:, 0], nan_indices[:, 1]])
