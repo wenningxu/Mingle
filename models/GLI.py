@@ -240,6 +240,7 @@ class TopologyBatch(nn.Module):
 
                 gli_line = self.gauss_integral(s1, e1, s2, e2)
                 GLI += gli_line
+
                 # print('gli_line', gli_line.grad_fn)
         return GLI
 
@@ -251,7 +252,11 @@ class TopologyBatch(nn.Module):
             for j in range(len(paths)):
                 path2 = pose2[paths[j]]
                 gli_bone = self.gauss_integral_all(path1, path2)
-                GLI[i, j] = gli_bone
+                GLI[i, j] += gli_bone
+        grad = torch.autograd.grad(GLI.sum(), pose1, allow_unused=True, retain_graph=True)
+        for g, skeleton, skeleton2 in zip(grad, pose1, pose2):
+            assert g is not None, f"No gradient for {skeleton, skeleton2}"
+            assert not torch.isnan(g).any(), f"NaN gradient in {skeleton, skeleton2}"
         return GLI
 
     def gauss_integral_motion(self, motion1, motion2):
